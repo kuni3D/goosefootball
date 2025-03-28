@@ -1,0 +1,463 @@
+<html>
+<head>
+    <title>Pro Evolution Goose 25 - Local</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        .header {
+            position: absolute; top: 10px; left: 0; width: 100%;
+            display: flex; justify-content: space-between; padding: 0 20px;
+            box-sizing: border-box; color: #808080; font-size: clamp(16px, 2vw, 18px);
+            z-index: 1; pointer-events: none;
+        }
+        .scoreboard {
+            position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+            color: #ffffff; font-size: 24px; text-align: center;
+            background: rgba(0, 0, 0, 0.5); padding: 5px 15px; border-radius: 5px;
+            z-index: 1;
+        }
+        .buttons {
+            position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            z-index: 1; display: flex; gap: 10px;
+        }
+        button {
+            padding: 5px 10px; font-size: 16px; background: #ffffff;
+            border: none; border-radius: 5px; cursor: pointer;
+            pointer-events: auto;
+        }
+        button:hover {
+            background: #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>Goose Football '25</div>
+        <div>by Kuni3D</div>
+    </div>
+    <div id="scoreboard" class="scoreboard">TEAM #1: 0 - TEAM #2: 0</div>
+    <div class="buttons">
+        <button id="resetBallButton">Reset Ball</button>
+        <button id="resetGameButton">Reset Game</button>
+    </div>
+
+    <script src="https://unpkg.com/three@0.134.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/shaders/ColorCorrectionShader.js"></script>
+
+    <script>
+        // Variables globales
+        let scene, camera, renderer, composer, clock, controls;
+        let player1Model, player2Model, player1Mixer, player2Mixer;
+        let ball, velocity = new THREE.Vector3(0, 0, 0);
+        let team1Score = 0, team2Score = 0;
+        const scoreboard = document.getElementById('scoreboard');
+        const speed = 0.1;
+        const roomSizeX = 1.4;
+        const roomSizeZ = 2.35;
+        const GRAVITY = -0.001;
+        const player1Keys = { w: false, a: false, s: false, d: false, t: false };
+        const player2Keys = { u: false, h: false, j: false, k: false, p: false };
+        const ballBox = new THREE.Box3();
+        const player1Box = new THREE.Box3();
+        const player2Box = new THREE.Box3();
+        let particles = [];
+
+        // Funciones
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            composer = new THREE.EffectComposer(renderer);
+            const renderPass = new THREE.RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            const colorCorrectionPass = new THREE.ShaderPass(THREE.ColorCorrectionShader);
+            colorCorrectionPass.uniforms['powRGB'].value = new THREE.Vector3(1, 1, 1);
+            colorCorrectionPass.uniforms['mulRGB'].value = new THREE.Vector3(0.7, 0.7, 0.7);
+            colorCorrectionPass.uniforms['addRGB'].value = new THREE.Vector3(0.31, 0.3, 0.3);
+            composer.addPass(colorCorrectionPass);
+
+            const ambientLight = new THREE.AmbientLight(0xC9E6F0, 1.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            directionalLight.position.set(5, 10, 5);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            clock = new THREE.Clock();
+
+            const goalWidth = 1.3;
+            const goalHeight = 0.7;
+            const postRadius = 0.05;
+            const postMaterial = new THREE.MeshBasicMaterial({ color: 0xE4E4E4 });
+
+            const posts = [
+                [-goalWidth/2, -2.35, 'leftPost'], [goalWidth/2, -2.35, 'rightPost'],
+                [-goalWidth/2, 2.35, 'leftPost2'], [goalWidth/2, 2.35, 'rightPost2']
+            ];
+            posts.forEach(([x, z, name]) => {
+                const post = new THREE.Mesh(new THREE.CylinderGeometry(postRadius, postRadius, goalHeight, 32), postMaterial);
+                post.position.set(x, goalHeight/2, z);
+                post.name = name;
+                scene.add(post);
+            });
+
+            const crossbars = [[-2.35, 'crossbar'], [2.35, 'crossbar2']];
+            crossbars.forEach(([z, name]) => {
+                const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(postRadius, postRadius, goalWidth, 32), postMaterial);
+                crossbar.position.set(0, goalHeight-0.04, z);
+                crossbar.rotation.z = Math.PI / 2;
+                crossbar.name = name;
+                scene.add(crossbar);
+            });
+
+            const loader = new THREE.GLTFLoader();
+            loader.load('/pelotita2.glb', (gltf) => {
+                const model = gltf.scene;
+                scene.add(model);
+
+                ball = model.getObjectByName('pelota');
+                if (ball) {
+                    ball.castShadow = true;
+                    console.log('Pelota cargada:', ball);
+                } else {
+                    console.error('No se encontró la pelota');
+                }
+
+                player1Model = model.getObjectByName('armature');
+                if (player1Model) {
+                    player1Model.position.set(-0.5, 0.1, 0);
+                    player1Mixer = new THREE.AnimationMixer(player1Model);
+                    player1Model.animations = {};
+                    ['idlecomun', 'correr', 'patear'].forEach(name => {
+                        const clip = gltf.animations.find(c => c.name.toLowerCase() === name);
+                        if (clip) {
+                            const action = player1Mixer.clipAction(clip);
+                            action.setLoop(name === 'patear' ? THREE.LoopOnce : THREE.LoopRepeat);
+                            player1Model.animations[name] = action;
+                            console.log(`Animación ${name} cargada para ganzito`);
+                        }
+                    });
+                    if (player1Model.animations['idlecomun']) {
+                        player1Model.animations['idlecomun'].play();
+                        player1Model.currentAction = 'idlecomun';
+                    }
+                } else {
+                    console.error('No se encontró armature para ganzito');
+                }
+
+                player2Model = model.getObjectByName('armatur2');
+                if (player2Model) {
+                    player2Model.position.set(0.5, 0.11, 0);
+                    player2Mixer = new THREE.AnimationMixer(player2Model);
+                    player2Model.animations = {};
+                    ['2quieto', '2corre', '2patea'].forEach(name => {
+                        const clip = gltf.animations.find(c => c.name.toLowerCase() === name);
+                        if (clip) {
+                            const action = player2Mixer.clipAction(clip);
+                            action.setLoop(name === '2patea' ? THREE.LoopOnce : THREE.LoopRepeat);
+                            player2Model.animations[name] = action;
+                            console.log(`Animación ${name} cargada para ganzit2`);
+                        }
+                    });
+                    if (player2Model.animations['2quieto']) {
+                        player2Model.animations['2quieto'].play();
+                        player2Model.currentAction = '2quieto';
+                    }
+                } else {
+                    console.error('No se encontró armatur2 para ganzit2');
+                }
+
+                camera.position.set(0, 2.5, 7.6);
+                camera.lookAt(0, 0, 0);
+            }, undefined, (error) => {
+                console.error('Error al cargar el modelo:', error);
+            });
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.minDistance = 5;
+            controls.maxDistance = 20;
+            controls.maxPolarAngle = Math.PI / 2.2;
+
+            document.getElementById('resetBallButton').addEventListener('click', resetBall);
+            document.getElementById('resetGameButton').addEventListener('click', resetGame);
+        }
+
+        function updateScoreboard() {
+            scoreboard.textContent = `Equipo 1: ${team1Score} - Equipo 2: ${team2Score}`;
+        }
+
+        function createFireworks(x, z) {
+            const particleCount = 100;
+            const particleGeometry = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            const colors = [];
+            const sizes = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(x, 0, z);
+                const velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05,
+                    Math.random() * 0.1 + 0.05,
+                    (Math.random() - 0.5) * 0.05
+                );
+                velocities.push(velocity.x, velocity.y, velocity.z);
+                const color = new THREE.Color(Math.random(), Math.random(), Math.random());
+                colors.push(color.r, color.g, color.b);
+                sizes.push(Math.random() * 0.05 + 0.05);
+            }
+
+            particleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            particleGeometry.setAttribute('velocity', new THREE.Float32BufferAttribute(velocities, 3));
+            particleGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            particleGeometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+            const particleMaterial = new THREE.PointsMaterial({
+                vertexColors: true,
+                size: 0.1,
+                transparent: true,
+                opacity: 1
+            });
+
+            const particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+            scene.add(particleSystem);
+            particles.push({ system: particleSystem, life: 100 });
+        }
+
+        function updateFireworks() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                const positions = p.system.geometry.attributes.position.array;
+                const velocities = p.system.geometry.attributes.velocity.array;
+
+                for (let j = 0; j < positions.length; j += 3) {
+                    positions[j] += velocities[j];
+                    positions[j + 1] += velocities[j + 1] - 0.005;
+                    positions[j + 2] += velocities[j + 2];
+                    velocities[j + 1] -= 0.001;
+                }
+
+                p.system.geometry.attributes.position.needsUpdate = true;
+                p.life--;
+
+                if (p.life <= 0) {
+                    scene.remove(p.system);
+                    particles.splice(i, 1);
+                } else {
+                    p.system.material.opacity = p.life / 100;
+                }
+            }
+        }
+
+        function checkCollisions() {
+            if (!ball) return;
+            ballBox.setFromObject(ball);
+
+            if (Math.abs(ball.position.x) > roomSizeX) velocity.x = -velocity.x * 0.8;
+            if (Math.abs(ball.position.z) > roomSizeZ) velocity.z = -velocity.z * 0.8;
+
+            ['leftPost', 'rightPost', 'crossbar', 'leftPost2', 'rightPost2', 'crossbar2'].forEach(name => {
+                const obj = scene.getObjectByName(name);
+                if (obj) {
+                    const box = new THREE.Box3().setFromObject(obj);
+                    if (ballBox.intersectsBox(box)) {
+                        velocity.x = -velocity.x * 0.8;
+                        velocity.z = -velocity.z * 0.8;
+                    }
+                }
+            });
+        }
+
+        function checkPlayerCollision(playerModel, keys, kickKey) {
+            if (!ball || !playerModel) return;
+            ballBox.setFromObject(ball).expandByScalar(0.1);
+            const playerBox = new THREE.Box3().setFromObject(playerModel).expandByScalar(0.08);
+
+            if (ballBox.intersectsBox(playerBox)) {
+                if (keys[kickKey]) {
+                    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(playerModel.quaternion);
+                    velocity.copy(direction.multiplyScalar(0.1));
+                    velocity.y = 0.03;
+                } else {
+                    const direction = ball.position.clone().sub(playerModel.position).normalize();
+                    velocity.add(direction.multiplyScalar(0.01));
+                }
+            }
+        }
+
+        function isBallInGoal() {
+            if (!ball) return;
+            const pos = ball.position;
+            const inGoal1 = pos.x > -0.65 && pos.x < 0.65 && pos.y < 0.7 && pos.z > -2.45 && pos.z < -2.25;
+            const inGoal2 = pos.x > -0.65 && pos.x < 0.65 && pos.y < 0.7 && pos.z > 2.25 && pos.z < 2.45;
+
+            if (inGoal1) {
+                team2Score++;
+                resetBall();
+                updateScoreboard();
+                createFireworks(0, -2.35); // Fuegos en el arco 1
+            } else if (inGoal2) {
+                team1Score++;
+                resetBall();
+                updateScoreboard();
+                createFireworks(0, 2.35); // Fuegos en el arco 2
+            }
+        }
+
+        function resetBall() {
+            if (ball) {
+                ball.position.set(0, 0, 0);
+                velocity.set(0, 0, 0);
+            }
+        }
+
+        function resetGame() {
+            if (ball) {
+                ball.position.set(0, 0, 0);
+                velocity.set(0, 0, 0);
+            }
+            team1Score = 0;
+            team2Score = 0;
+            updateScoreboard();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (player1Mixer) player1Mixer.update(delta);
+            if (player2Mixer) player2Mixer.update(delta);
+
+            if (player1Model) {
+                const dir1 = new THREE.Vector3();
+                if (player1Keys.w) dir1.z -= 1;
+                if (player1Keys.s) dir1.z += 1;
+                if (player1Keys.a) dir1.x -= 1;
+                if (player1Keys.d) dir1.x += 1;
+
+                if (dir1.length() > 0) {
+                    dir1.normalize().multiplyScalar(speed);
+                    player1Model.position.add(dir1);
+                    player1Model.rotation.y = Math.atan2(dir1.x, dir1.z);
+                    if (player1Model.currentAction !== 'correr') {
+                        player1Model.animations[player1Model.currentAction]?.fadeOut(0.25);
+                        player1Model.animations['correr']?.reset().fadeIn(0.25).play();
+                        player1Model.currentAction = 'correr';
+                    }
+                } else if (player1Model.currentAction === 'correr') {
+                    player1Model.animations['correr']?.fadeOut(0.25);
+                    player1Model.animations['idlecomun']?.reset().fadeIn(0.25).play();
+                    player1Model.currentAction = 'idlecomun';
+                }
+
+                if (player1Keys.t && player1Model.currentAction !== 'patear') {
+                    player1Model.animations[player1Model.currentAction]?.fadeOut(0.25);
+                    player1Model.animations['patear']?.reset().fadeIn(0.25).play();
+                    player1Model.currentAction = 'patear';
+                    player1Mixer.addEventListener('finished', () => {
+                        player1Model.animations['patear']?.stop();
+                        player1Model.animations['idlecomun']?.reset().play();
+                        player1Model.currentAction = 'idlecomun';
+                    }, { once: true });
+                }
+            }
+
+            if (player2Model) {
+                const dir2 = new THREE.Vector3();
+                if (player2Keys.u) dir2.z -= 1;
+                if (player2Keys.j) dir2.z += 1;
+                if (player2Keys.h) dir2.x -= 1;
+                if (player2Keys.k) dir2.x += 1;
+
+                if (dir2.length() > 0) {
+                    dir2.normalize().multiplyScalar(speed);
+                    player2Model.position.add(dir2);
+                    player2Model.rotation.y = Math.atan2(dir2.x, dir2.z);
+                    if (player2Model.currentAction !== '2corre') {
+                        player2Model.animations[player2Model.currentAction]?.fadeOut(0.25);
+                        player2Model.animations['2corre']?.reset().fadeIn(0.25).play();
+                        player2Model.currentAction = '2corre';
+                    }
+                } else if (player2Model.currentAction === '2corre') {
+                    player2Model.animations['2corre']?.fadeOut(0.25);
+                    player2Model.animations['2quieto']?.reset().fadeIn(0.25).play();
+                    player2Model.currentAction = '2quieto';
+                }
+
+                if (player2Keys.p && player2Model.currentAction !== '2patea') {
+                    player2Model.animations[player2Model.currentAction]?.fadeOut(0.25);
+                    player2Model.animations['2patea']?.reset().fadeIn(0.25).play();
+                    player2Model.currentAction = '2patea';
+                    player2Mixer.addEventListener('finished', () => {
+                        player2Model.animations['2patea']?.stop();
+                        player2Model.animations['2quieto']?.reset().play();
+                        player2Model.currentAction = '2quieto';
+                    }, { once: true });
+                }
+            }
+
+            if (ball) {
+                velocity.y += GRAVITY;
+                ball.position.add(velocity);
+                if (ball.position.y < 0) {
+                    ball.position.y = 0;
+                    velocity.y *= -0.5;
+                }
+                velocity.multiplyScalar(0.99);
+            }
+
+            checkCollisions();
+            checkPlayerCollision(player1Model, player1Keys, 't');
+            checkPlayerCollision(player2Model, player2Keys, 'p');
+            isBallInGoal();
+            updateFireworks();
+
+            controls.update();
+            composer.render();
+        }
+
+        // Event Listeners
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if ('wasd'.includes(key)) player1Keys[key] = true;
+            if (key === 't') player1Keys.t = true;
+            if ('uhjk'.includes(key)) player2Keys[key] = true;
+            if (key === 'p') player2Keys.p = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if ('wasd'.includes(key)) player1Keys[key] = false;
+            if (key === 't') player1Keys.t = false;
+            if ('uhjk'.includes(key)) player2Keys[key] = false;
+            if (key === 'p') player2Keys.p = false;
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Inicio
+        init();
+        animate();
+    </script>
+</body>
+</html>
